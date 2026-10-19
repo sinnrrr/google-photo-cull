@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Google Photos Cull demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 800px; height: 540px; overflow: hidden; }
+    body { background: #000; font-family: Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+    .stage { position: absolute; inset: 0; overflow: hidden; background: #000; }
+    #reset { pointer-events: none; opacity: 0; }
+    .viewer { position: absolute; inset: 0; background: #000; }
+    .photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+    .top-shade { position: absolute; top: 0; left: 0; right: 0; height: 74px; background: linear-gradient(#0007, transparent); }
+    .icon { width: 32px; height: 32px; display: grid; place-items: center; color: #e8eaed; position: absolute; border-radius: 50%; }
+    .icon svg { width: 18px; height: 18px; }
+    .back { top: 8px; left: 8px; }
+    .tools { display: flex; align-items: center; position: absolute; top: 8px; right: 8px; gap: 3px; }
+    .tools .icon { position: relative; }
+    .arrow { top: calc(50% - 18px); width: 36px; height: 36px; background: #0005; }
+    .arrow svg { width: 23px; height: 23px; }
+    .previous { left: 8px; }
+    .next { right: 8px; }
+    .viewer-count { position: absolute; left: 52px; top: 16px; color: #e8eaed; font-size: 16px; opacity: 0; }
+    .selection-control { position: absolute; right: 13px; top: 14px; display: flex; align-items: center; gap: 12px; color: #e8eaed; font-size: 12px; opacity: 0; }
+    .selected-photo { width: 20px; height: 20px; border: 2px solid #e8eaed; border-radius: 50%; color: transparent; display: grid; place-items: center; }
+    .selected-photo.checked { background: #8ab4f8; color: #202124; border-color: #8ab4f8; }
+    .selected-photo svg { width: 15px; height: 15px; }
+    .key { position: absolute; left: calc(50% - 21px); bottom: 28px; width: 42px; height: 39px; display: grid; place-items: center; border: 1px solid #ffffffb3; border-bottom: 3px solid #aeb4bd; border-radius: 6px; color: #fff; background: #202124d9; box-shadow: 0 2px 8px #0004; font-size: 21px; font-weight: 600; opacity: 0; }
+    .gallery { position: absolute; inset: 0; background: #fff; opacity: 0; }
+    .gallery-bar { height: 64px; display: flex; align-items: center; color: #444746; background: #fff; padding: 0 12px; gap: 15px; }
+    .gallery-bar .icon { position: relative; color: #444746; }
+    .selected-count { font-size: 16px; }
+    .gallery-tools { display: flex; gap: 8px; margin-left: auto; }
+    .gallery-content { position: absolute; top: 64px; bottom: 0; left: 0; right: 0; background: #fff; }
+    .grid { position: absolute; top: 24px; left: 18px; right: 18px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .tile { position: relative; height: 196px; overflow: hidden; background: #d3e3fd; }
+    .tile img { width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }
+    .tile.selected img { inset: 7px; width: calc(100% - 14px); height: calc(100% - 14px); }
+    .tile .check { position: absolute; left: 10px; top: 10px; width: 22px; height: 22px; background: #1a73e8; border-radius: 50%; display: grid; place-items: center; color: #fff; }
+    .tile .check svg { width: 17px; height: 17px; }
+    .tile:not(.selected) .check { display: none; }
+    .gallery-clean { position: absolute; top: 0; left: 0; right: 0; height: 64px; background: #fff; display: none; }
+    .gallery-clean .icon { color: #444746; top: 16px; left: 12px; }
+    .album-menu { position: absolute; right: 12px; top: 12px; width: 205px; padding: 8px 0; background: #f0f4f9; color: #202124; border-radius: 3px; box-shadow: 0 2px 6px #0005; opacity: 0; z-index: 5; }
+    .menu-item { height: 48px; padding: 0 14px; display: flex; align-items: center; font-size: 14px; white-space: nowrap; }
+    .shortcut { font-size: 10px; margin-left: auto; color: #444746; padding-left: 12px; }
+    .move-to-trash.hovered { background: #dfe3e7; }
+    .cursor { position: absolute; width: 20px; height: 25px; color: #fff; filter: drop-shadow(0 1px 1px #000b); opacity: 0; z-index: 8; transform-origin: top left; }
+    .cursor svg { width: 100%; height: 100%; }
+    .click-ring { position: absolute; width: 30px; height: 30px; border: 2px solid #8ab4f8; border-radius: 50%; opacity: 0; z-index: 7; }
+  </style>
+</head>
+<body>
+  <div id="active" class="stage"></div>
+  <div id="reset" class="stage"></div>
+  <script>
+    const icons = {
+      back: '<path d="m20 12H4m7-7-7 7 7 7"/>',
+      next: '<path d="m9 5 7 7-7 7"/>',
+      check: '<path d="m5 12 4 4L19 6"/>',
+      close: '<path d="m6 6 12 12M6 18 18 6"/>',
+      share: '<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.7 7.6-4.4m-7.6 7 7.6 4.4"/>',
+      edit: '<path d="M4 7h16M4 17h16M8 4v6m8 4v6"/>',
+      zoom: '<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6M7 10h6m-3-3v6"/>',
+      info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-11v1"/>',
+      star: '<path d="m12 3 2.8 5.8 6.4.9-4.6 4.5 1.1 6.3-5.7-3-5.7 3 1.1-6.3L2.8 9.7l6.4-.9Z"/>',
+      trash: '<path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/>',
+      more: '<circle cx="12" cy="5" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="12" cy="19" r=".8"/>',
+      plus: '<path d="M12 5v14M5 12h14"/>'
+    };
+    const svg = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icons[name]}</svg>`;
+    const photos = [
+      { src: 'photos/PA171331.jpg', position: '50% 50%', filter: 'none' },
+      { src: 'photos/PA172114.jpg', position: '50% 50%', filter: 'none' },
+      { src: 'photos/PA101617.jpg', position: '50% 50%', filter: 'none' },
+      { src: 'photos/PA121528.jpg', position: '50% 50%', filter: 'none' }
+    ];
+    const markup = `
+      <div class="viewer">
+        <img class="photo outgoing" alt="" src="${photos[0].src}">
+        <img class="photo incoming" alt="" src="${photos[0].src}">
+        <div class="top-shade"></div>
+        <div class="icon back">${svg('back')}</div>
+        <div class="viewer-count"></div>
+        <div class="selection-control"><span class="selection-label">Select</span><div class="selected-photo">${svg('check')}</div></div>
+        <div class="tools">${['share', 'edit', 'zoom', 'info', 'star', 'trash', 'more'].map(name => `<div class="icon">${svg(name)}</div>`).join('')}</div>
+        <div class="icon arrow previous" style="transform:rotate(180deg)">${svg('next')}</div>
+        <div class="icon arrow next">${svg('next')}</div>
+        <div class="key">D</div>
+      </div>
+      <div class="gallery">
+        <div class="gallery-bar"><div class="icon">${svg('close')}</div><span class="selected-count">3 selected</span><div class="gallery-tools">${['share', 'plus', 'more'].map(name => `<div class="icon">${svg(name)}</div>`).join('')}</div></div>
+        <div class="gallery-content"><div class="grid">${photos.map((photo, index) => `<div class="tile${index < 3 ? ' selected' : ''}"><img alt="" src="${photo.src}" style="object-position:${photo.position};filter:${photo.filter}"><div class="check">${svg('check')}</div></div>`).join('')}</div></div>
+        <div class="gallery-clean"><div class="icon">${svg('back')}</div></div>
+        <div class="album-menu">
+          <div class="menu-item">Download<span class="shortcut">Shift+D</span></div>
+          <div class="menu-item">Edit date &amp; time</div>
+          <div class="menu-item">Edit location</div>
+          <div class="menu-item">Remove from album<span class="shortcut">#</span></div>
+          <div class="menu-item move-to-trash">Move to trash</div>
+        </div>
+      </div>
+      <div class="click-ring"></div>
+      <div class="cursor"><svg viewBox="0 0 20 25" fill="white" stroke="#303134" stroke-width="1.4" stroke-linejoin="round"><path d="M2 1v19l5-5 4 9 4-2-4-8h7Z"/></svg></div>`;
+    const active = document.querySelector('#active');
+    const reset = document.querySelector('#reset');
+    active.innerHTML = reset.innerHTML = markup;
+    const presses = [.5, 1.55, 2.6];
+    const ease = value => value < .5 ? 2 * value * value : 1 - (-2 * value + 2) ** 2 / 2;
+    const clamp = value => Math.min(1, Math.max(0, value));
+    function photoStyle(element, index, offset, opacity) {
+      const photo = photos[index];
+      if (!element.src.endsWith(photo.src)) element.src = photo.src;
+      element.style.objectPosition = photo.position;
+      element.style.filter = photo.filter;
+      element.style.transform = `translateX(${offset}px)`;
+      element.style.opacity = opacity;
+    }
+    function scene(element, time) {
+      let current = 0;
+      let selected = 0;
+      let checked = false;
+      let pressed = false;
+      let transitioning = false;
+      let progress = 0;
+      for (let index = 0; index < presses.length; index++) {
+        const since = time - presses[index];
+        if (since >= .1) selected = index + 1;
+        if (since >= 0 && since < .42) pressed = true;
+        if (since >= .1 && since < .56) checked = true;
+        if (since >= .56) current = index + 1;
+        else if (since >= .34) {
+          current = index;
+          transitioning = true;
+          progress = ease((since - .34) / .22);
+        }
+      }
+      if (transitioning) {
+        photoStyle(element.querySelector('.outgoing'), current, -25 * progress, 1 - progress);
+        photoStyle(element.querySelector('.incoming'), current + 1, 25 * (1 - progress), progress);
+      } else {
+        photoStyle(element.querySelector('.outgoing'), current, 0, 1);
+        photoStyle(element.querySelector('.incoming'), current, 0, 0);
+      }
+      element.querySelector('.key').style.opacity = pressed ? 1 : 0;
+      element.querySelector('.viewer-count').textContent = `${selected} selected`;
+      element.querySelector('.viewer-count').style.opacity = selected ? 1 : 0;
+      element.querySelector('.selection-control').style.opacity = selected ? 1 : 0;
+      element.querySelector('.selected-photo').classList.toggle('checked', checked);
+      element.querySelector('.selection-label').textContent = checked ? 'Selected' : 'Select';
+      element.querySelector('.tools').style.opacity = selected ? 0 : 1;
+      element.querySelector('.next').style.background = transitioning ? '#ffffff30' : '#0005';
+      const galleryOpacity = clamp((time - 3.9) / .2);
+      element.querySelector('.gallery').style.opacity = galleryOpacity;
+      element.querySelector('.viewer').style.opacity = 1 - galleryOpacity;
+      const menuOpacity = clamp((time - 4.9) / .12) * (1 - clamp((time - 6.02) / .12));
+      element.querySelector('.album-menu').style.opacity = menuOpacity;
+      element.querySelector('.move-to-trash').classList.toggle('hovered', time >= 5.55 && time < 6.14);
+      const removing = ease(clamp((time - 6.16) / .28));
+      element.querySelectorAll('.tile').forEach((tile, index) => {
+        if (index < 3) {
+          tile.style.opacity = 1 - removing;
+          tile.style.transform = `scale(${1 - removing * .06})`;
+        } else tile.style.transform = `translateY(${-202 * removing}px)`;
+      });
+      element.querySelector('.gallery-clean').style.display = time >= 6.3 ? 'block' : 'none';
+      element.querySelector('.selected-count').style.opacity = time >= 6.3 ? 0 : 1;
+      const keyframes = [
+        [3.35, 395, 432], [3.75, 23, 23], [4.05, 23, 23],
+        [4.65, 772, 32], [5.03, 772, 32],
+        [5.65, 675, 236], [6.2, 675, 236], [6.6, 649, 400]
+      ];
+      let cursorX = keyframes[0][1];
+      let cursorY = keyframes[0][2];
+      for (let index = 0; index < keyframes.length - 1; index++) {
+        const start = keyframes[index];
+        const end = keyframes[index + 1];
+        if (time < start[0]) break;
+        const amount = ease(clamp((time - start[0]) / (end[0] - start[0])));
+        cursorX = start[1] + (end[1] - start[1]) * amount;
+        cursorY = start[2] + (end[2] - start[2]) * amount;
+      }
+      const cursor = element.querySelector('.cursor');
+      cursor.style.left = `${cursorX}px`;
+      cursor.style.top = `${cursorY}px`;
+      cursor.style.opacity = time >= 3.35 && time < 6.9 ? 1 : 0;
+      cursor.style.transform = [3.8, 4.85, 5.85].some(click => time >= click && time < click + .12) ? 'scale(.88)' : 'none';
+      const ring = element.querySelector('.click-ring');
+      let ringOpacity = 0;
+      for (const [at, x, y] of [[3.8, 23, 23], [4.85, 772, 32], [5.85, 675, 236]]) {
+        const since = time - at;
+        if (since >= 0 && since < .28) {
+          ringOpacity = (1 - since / .28) * .9;
+          ring.style.left = `${x - 15}px`;
+          ring.style.top = `${y - 15}px`;
+          ring.style.transform = `scale(${.6 + since * 2})`;
+        }
+      }
+      ring.style.opacity = ringOpacity;
+    }
+    window.renderFrame = time => {
+      scene(active, time % 8);
+      scene(reset, 0);
+      reset.style.opacity = time % 8 > 7.35 ? ease(Math.min(1, (time % 8 - 7.35) / .55)) : 0;
+    };
+    const fixed = new URLSearchParams(location.search).get('t');
+    if (fixed !== null) window.renderFrame(Number(fixed));
+    else {
+      const started = performance.now();
+      function animate(now) {
+        window.renderFrame((now - started) / 1000);
+        requestAnimationFrame(animate);
+      }
+      requestAnimationFrame(animate);
+    }
+  </script>
+</body>
+</html>
